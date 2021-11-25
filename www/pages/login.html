@@ -1,0 +1,93 @@
+<template>
+  <div class="page" data-name="home">
+    <!-- Top Navbar -->
+    <div class="navbar">
+      <div class="navbar-bg"></div>
+      <div class="navbar-inner">
+        <div class="left">
+          <a href="#" class="link back">
+            <i class="icon icon-back"></i>
+            <span class="if-not-md">Back</span>
+          </a>
+        </div>
+      <div class="title sliding">ログイン</div>
+      </div>
+    </div>
+
+    <!-- Scrollable page content-->
+    <div class="page-content">
+      <div class="list">
+        <form id="login">
+          <ul>
+            <li class="item-content item-input">
+              <div class="item-inner">
+                <div class="item-title item-label">ユーザ名</div>
+                <div class="item-input-wrap">
+                  <input type="text" name="userName" placeholder="Your username" value="goofmint" />
+                </div>
+              </div>
+            </li>
+            <li class="item-content item-input">
+              <div class="item-inner">
+                <div class="item-title item-label">パスワード</div>
+                <div class="item-input-wrap">
+                  <input type="password" name="password" placeholder="Your password" value="goofmint" />
+                </div>
+              </div>
+            </li>
+          </ul>
+        </form>
+      </div>
+      <div class="list">
+        <ul>
+          <li>
+            <a href="#" @click=${signInOrLogin} class="item-link list-button login-button">新規登録 & ログイン</a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+export default (props, { $f7, $update, $f7router, $f7route, $store, $on, $ }) => {
+  // 新規登録 & ログインボタンをタップした際のイベント
+  const signInOrLogin = async () => {
+    // 入力値をオブジェクト化（app.jsにて定義）
+    const params = serializeForm('form#login');
+    // ユーザ登録処理    
+    try {
+      await registerUser(params);
+    } catch (e) {
+      // すでに同じ名前で登録されている場合はエラー
+      // 今回は無視して次に進みます
+    }
+    try {
+      // ログインと権限設定の処理
+      await loginUser(params);
+      // 前の画面に戻る
+      $f7router.back();
+    } catch (e) {
+      // ログイン失敗したらアラート
+      console.log(e);
+      $f7.dialog.alert('ログイン失敗しました。ID、パスワードを確認してください');
+    }
+  }
+
+  const registerUser = (params) => {
+    const user = new ncmb.User;
+    // 入力値をセットして、ユーザ登録処理を実行
+    return user
+      .set('userName', params.userName)
+      .set('password', params.password)
+      .signUpByAccount();
+  }
+
+  const loginUser = (params) => {
+    // ログイン処理
+    return ncmb.User.login(params.userName, params.password);
+  }
+
+  return $render;
+}
+</script>

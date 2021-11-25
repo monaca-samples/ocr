@@ -1,0 +1,171 @@
+<template>
+  <div class="page">
+    <div class="navbar">
+      <div class="navbar-bg"></div>
+      <div class="navbar-inner sliding">
+        <div class="title">OCR</div>
+        <div class="right">
+          <a href="#" @click=${save} class="link save">
+            <i class="f7-icons">floppy_disk</i> 保存
+          </a>
+        </div>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="block">
+        <form id="form">
+          <div class="row">
+            <div class="col-100">
+              <div class="list">
+                <ul>
+                  <li class="item-content item-input">
+                    <div class="item-inner">
+                      <div class="item-title item-label">言語</div>
+                      <div class="item-input-wrap">
+                        <div class="segmented">
+                          <a class="button lang english button-active" data-lang="eng" @click=${() => setLang('english')}>English</a>
+                          <a class="button lang japanese" data-lang="jpn" @click=${() => setLang('japanese')}>日本語</a>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                  <li class="item-content item-input">
+                    <div class="item-inner">
+                      <div class="item-title item-label">撮影</div>
+                      <div class="item-input-wrap">
+                        <img src="assets/images/photo.png" class="preview" @click=${() => $f7.$el.find('#photo').click()} />
+                        <div style="display: none;">
+                          <input type="file" id="photo" @change=${selectPhoto} accept="images/*" />
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                  <li class="item-content item-input">
+                    <div class="item-inner">
+                      <div class="item-title item-label">解析結果</div>
+                      <div class="item-input-wrap">
+                        <textarea name="text" class="resizable"></textarea>
+                      </div>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>      
+    </div>
+  </div>
+</template>
+
+<style>
+  .preview {
+    width: 100%;
+  }
+  .save {
+    pointer-events: none;
+  }
+</style>
+
+<script>
+  export default async function (props, {$f7, $f7router, $on, $store }) {
+    // DOMが初期化完了した際に呼ばれるイベント
+    $on('pageBeforeIn', async (e, page) => {
+      // 認証していなければ、ログイン画面に移動
+      if (!(await checkAuth())) {
+        return $f7router.navigate({name: 'Login'});
+      }
+    });
+
+    // 画像が選択された際の処理。OCR処理の実行
+    const selectPhoto = async (e) => {
+      // プログレスバー表示
+      $f7.progressbar.show(0);
+      // 保存ボタンを無効にする
+      $f7.$el.find('.save').css({'pointer-events': 'none'});
+      // 選択されている言語を取得
+      const lang = $f7.$el.find('.lang.button-active').data('lang');
+      // 結果を表示するテキストエリア
+      const ele = $f7.$el.find('[name="text"]');
+      ele.val(''); // 一旦内容を消す
+      // 指定されたファイルを読み込む
+      const file = e.target.files[0];
+      const src = await photoReader(file);
+      // プレビューに適用
+      $f7.$el.find('.preview').attr('src', src);
+      try {
+        // OCR処理の実行
+        const res = await Tesseract.recognize(file, lang, { logger: m => {
+          // プログレスバーの進捗を更新
+          if (m.status !== 'recognizing text') return;
+          $f7.progressbar.set(m.progress * 100);
+        }});
+        // 結果のテキスト
+        const text = res.data.text;
+        // テキストエリアに反映して、サイズを調整する
+        ele
+          .val(res.data.text)
+          .css('height', `${text.split(/\n/).length * 26}px`);
+        // 保存ボタンを押せるようにする
+        $f7.$el.find('.save').css({'pointer-events': 'auto'});
+      } catch (e) {
+        console.log(e);
+      }
+      // プログレスバーを消す
+      $f7.progressbar.hide();
+    }
+
+    // 言語を切り替える
+    const setLang = (e) => {
+      // ボタンからアクティブ表示を外す
+      $f7.$el.find('.lang').removeClass('button-active');
+      // 選択されたボタンに `button-active` クラスを追加する
+      for (const dom of $f7.$el.find('.lang')) {
+        if ($(dom).hasClass(e)) {
+          $(dom).addClass('button-active');
+        }
+      }
+    }
+
+    const save = async (e) => {
+      // OCRクラス（DBでいうテーブル相当）を用意
+      const OCR = ncmb.DataStore('OCR');
+      // OCRクラスのインスタンス（DBでいう行相当）を用意
+      const o = new OCR;
+      // 解析結果のテキストをセット
+      const text = $f7.$el.find('[name="text"]').val();
+      o.set('text', text);
+      // ログインしているユーザの情報
+      const user = ncmb.User.getCurrentUser();
+      // ACL（アクセスコントロール）を用意
+      const acl = new ncmb.Acl;
+      acl
+        .setUserReadAccess(user, true)   // 作成者のみ読み込み可能
+        .setUserWriteAccess(user, true); // 作成者のみ編集可能
+      // プレビュー画像の情報を取得
+      const src = $f7.$el.find('.preview').attr('src');
+      if (src.indexOf('data:') > -1) { // dataURIであれば続行
+        // ファイルあり
+        const blob = await (await fetch(src)).blob();
+        // ファイル名は重複しないように生成
+        const fileName = `${user.objectId}-${(new Date).getTime()}.${blob.type.split('/')[1]}`;
+        // アップロード
+        await ncmb.File.upload(fileName, blob, acl);
+        // ファイル名を設定
+        o.set('fileName', fileName)
+      }
+      // ACLを設定して保存
+      await o
+        .set('acl', acl)
+        .save();
+      // トーストで通知
+      $f7.toast.create({
+        text: '保存しました',
+        position: 'top',
+        closeTimeout: 2000,
+      }).open();
+    }
+
+    return $render;
+  }
+</script>
