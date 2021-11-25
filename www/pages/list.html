@@ -1,0 +1,93 @@
+<template>
+  <div class="page">
+    <div class="navbar">
+      <div class="navbar-bg"></div>
+      <div class="navbar-inner sliding">
+        <div class="title">OCR履歴</div>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="list media-list">
+        <ul id="histories">
+        </ul>
+      </div>
+    </div>
+  </div>
+</template>
+<style>
+  .photo {
+    object-fit: cover;
+    width: 50px;
+    height: 50px;
+  }
+</style>
+<script>
+  export default async function (props, { $f7, $f7router, $on, $store }) {
+    // タブが表示された際に実行されるイベント
+    $on('page:tabshow', async function (e, page) {
+      // これまでのOCR履歴を取得
+      const ary = await getAllOCR();
+      // 履歴を表示
+      showOCRs(ary);
+    });
+
+    // OCR履歴を一覧表示する
+    const showOCRs = (ary) => {
+      $f7.$el.find('#histories').html(ary.map(ocr => `
+        <li>
+          <a href="#" class="item-link item-content" data-object-id="${ocr.objectId}">
+            <div class="item-media">
+              <img src="assets/images/photo.png" class="photo" />
+            </div>
+            <div class="item-inner">
+              <div class="item-title-row">
+                <div class="item-title"></div>
+                <div class="item-after">${ocr.text.length}文字</div>
+              </div>
+              <div class="item-text">${ocr.text}</div>
+            </div>
+          </a>
+        </li>
+      `)
+        .join(''));
+
+      // 履歴ごとに写真を読み込んで、リストに適用する
+      for (const ocr of ary) {
+        // 写真をダウンロード。awaitを使うと遅くなるのでPromiseで処理
+        ncmb.File.download(ocr.fileName, 'blob')
+          .then(async res => {
+            // BlobをBase64に変換
+            const src = await photoReader(res);
+            // 画像を差し替える
+            $f7.$el.find(`[data-object-id="${ocr.objectId}"] img.photo`).attr('src', src);
+          });
+      }
+
+      // 一覧表示したリストに対してタップイベントを追加
+      $f7.$el.find('#histories a').on('click', e => {
+        // タップしたデータのキー（objectId）を取得
+        const objectId = $(e.target).parents('a').data('object-id');
+        // 画像も取得
+        const img = $(e.target).parents('a').find('img.photo').attr('src');
+        // 対象になる履歴データを取得
+        const ocr = ary.filter(m => m.objectId === objectId)[0];
+        // 表示画面に遷移
+        $f7router.navigate(`/${objectId}`, {
+          props: { ocr, img }
+        });
+      });
+    }
+
+    // OCR履歴を取得する関数
+    const getAllOCR = () => {
+      // OCRクラス（DBでいうテーブル相当）を用意
+      const OCR = ncmb.DataStore('OCR');
+      // OCRクラスのデータを検索
+      return OCR
+        .order('createDate') // 作成日の降順
+        .limit(20)           // 20件
+        .fetchAll();
+    }
+    return $render;
+  }
+</script>

@@ -1,0 +1,349 @@
+<template>
+  <div class="page">
+    <div class="navbar">
+      <div class="navbar-bg"></div>
+      <div class="navbar-inner sliding">
+        <div class="title">OCR</div>
+        <div class="right">
+          <a href="#" @click=${save} class="link save">
+            <i class="f7-icons">floppy_disk</i> 保存
+          </a>
+        </div>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="block">
+        <form id="form">
+          <div class="row">
+            <div class="col-100">
+              <div class="list">
+                <ul>
+                  <li class="item-content item-input">
+                    <div class="item-inner">
+                      <div class="item-title item-label">言語</div>
+                      <div class="item-input-wrap">
+                        <div class="segmented">
+                          <a class="button lang english button-active" data-lang="eng" @click=${()=>
+                            setLang('english')}>English</a>
+                          <a class="button lang japanese" data-lang="jpn" @click=${()=> setLang('japanese')}>日本語</a>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                  <li class="item-content item-input">
+                    <div class="item-inner">
+                      <div class="item-title item-label">撮影</div>
+                      <div class="gauge-wrapper">
+                        <div class="gauge"></div>
+                      </div>
+                      <div class="item-input-wrap image-wrapper">
+                        <img src="assets/images/photo.png" class="preview" id="img-preview"
+                          @load=${setPreviewImageHeight} style="max-width:100%;display:block;" />
+                      </div>
+                    </div>
+                  </li>
+                  <li>
+                    <div class="item-content">
+                      <div class="item-inner">
+                        <div class="item-input-wrap">
+                          <div class="row">
+                            <div style="display: none;">
+                              <input type="file" id="photo" @change=${selectPhoto} />
+                            </div>
+                            <button class="col button button-fill button-round" @click=${startFileSelect}>写真選択</button>
+                            <button class="col button button-fill button-round" @click=${startCrop}>トリミング</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                  <li>
+                    <div class="item-content">
+                      <div class="item-inner">
+                        <div class="item-input-wrap">
+                          <div class="row">
+                            <button class="col button button-fill button-round" @click=${undoCrop}>取消</button>
+                            <button class="col button button-fill button-round" @click=${cropImage}>完了</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                  <li class="item-content item-input hidden" id="ocr-button">
+                    <div class="item-inner">
+                      <div class="item-input-wrap">
+                        <div class="row">
+                          <button class="col button button-fill button-round" @click=${startOcr}>OCRを開始</button>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                  <li class="item-content item-input hidden" id="text-result">
+                    <div class="item-inner">
+                      <div class="item-title item-label">解析結果</div>
+                      <div class="item-input-wrap">
+                        <textarea name="text" class="resizable"></textarea>
+                      </div>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style>
+  .preview {
+    width: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+
+  .save {
+    pointer-events: none;
+  }
+
+  .image-wrapper {
+    width: 100%;
+    position: relative;
+    height: 100%;
+  }
+
+  .gauge-wrapper {
+    position: absolute;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .gauge {
+    width: 100%;
+  }
+
+  .preview-processing {
+    filter: blur(4px);
+    -webkit-filter: blur(4px);
+  }
+
+  .hidden {
+    display: none !important;
+  }
+</style>
+
+<script>
+  export default async function (props, {
+    $f7,
+    $f7router,
+    $on,
+    $store
+  }) {
+    window.croppedValue = "";
+    // DOMが初期化完了した際に呼ばれるイベント
+    $on('pageBeforeIn', async (e, page) => {
+      // 認証していなければ、ログイン画面に移動
+      if (!(await checkAuth())) {
+        return $f7router.navigate({
+          name: 'Login'
+        });
+      }
+    });
+
+    const setPreviewImageHeight = (e) => {
+      const previewImage = $f7.$el.find('.preview');
+      $f7.$el.find('.image-wrapper').css({
+        'height': `${previewImage.height()}px`
+      });
+    }
+
+    // selectPhotoを呼び出す
+    const startFileSelect = (e) => {
+      e.preventDefault();
+      if (window.cropper) return;
+
+      $f7.$el.find('#photo').click();
+    }
+
+    // 画像が選択された際の処理
+    const selectPhoto = async (e) => {
+      // 保存ボタンを無効にする
+      $f7.$el.find('.save').css({'pointer-events': 'none'});
+
+      // 結果を表示するテキストエリア
+      const ele = $f7.$el.find('[name="text"]');
+      ele.val(''); // 一旦内容を消す
+
+      // 指定されたファイルを読み込む
+      const file = e.target.files[0];
+      const src = await photoReader(file);
+
+      window.originalImage = src;
+      
+      // プレビューに適用
+      setPreviewImage(src);
+
+      $f7.$el.find('#ocr-button').removeClass('hidden');
+    }
+
+    const startOcr = async (e) => {
+      e.preventDefault();
+
+      const file = $f7.$el.find('.preview').attr('src');
+      const lang = $f7.$el.find('.lang.button-active').data('lang')
+      const ele = $f7.$el.find('[name="text"]');
+
+      try {
+        const progress = $f7.dialog.progress('Processing', 0);
+
+        // OCR処理の実行
+        const res = await Tesseract.recognize(file, lang, {
+          logger: m => {
+            if (m.status !== 'recognizing text') return;
+            progress.setProgress(m.progress * 100) // OCR進捗を更新
+          }
+        });
+
+        progress.close()
+
+        // 結果のテキスト
+        const text = res.data.text;
+        // テキストエリアに反映して、サイズを調整する
+        $f7.$el.find('#text-result').removeClass('hidden');
+        ele
+          .val(res.data.text)
+          .css('height', `${text.split(/\n/).length * 26}px`);
+
+        // 保存ボタンを押せるようにする
+        $f7.$el.find('.save').css({
+          'pointer-events': 'auto'
+        });
+      } catch (e) {
+        alert("error")
+        console.log(e);
+      }
+    }
+
+    const cropImage = (e) => {
+      e.preventDefault();
+      _cropImage(window.originalImage, croppedValue.x, croppedValue.y, croppedValue.width, croppedValue.height, async function (data) {
+        if (window.cropper) {
+          window.cropper.destroy();
+          window.cropper = null;
+        }
+        setPreviewImage(data);
+      });
+    }
+
+    // 元画像からトリミングしたサイズの画像を生成する
+    const _cropImage = (imageData, newX, newY, newWidth, newHeight, done) => {
+      // 元画像からイメージオブジェクトを作成する
+      const originalImage = new Image();
+      originalImage.src = imageData;
+
+      // canvasオブジェクトの初期化
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      // 元画像の読み込みが終了するのを待つ
+      originalImage.addEventListener('load', function () {
+        // canvasに新しい幅と高さを設定します
+        canvas.width = newWidth;
+        canvas.height = newHeight;
+        ctx.drawImage(originalImage, newX, newY, newWidth, newHeight, 0, 0, newWidth, newHeight);
+
+        done(canvas.toDataURL());
+      });
+    };
+
+    const setPreviewImage = (data) => {
+      $f7.$el.find('.preview').attr('src', data);
+      setPreviewImageHeight();
+    }
+
+    const startCrop = (e) => {
+      e.preventDefault();
+
+      const image = document.getElementById('img-preview');
+      window.cropper = new Cropper(image, {
+        dragMode: 'move',
+        crop(event) {
+          window.croppedValue = event.detail;
+        }
+      });
+    }
+
+    const undoCrop = (e) => {
+      e.preventDefault();
+      if (window.cropper) {
+        window.cropper.destroy();
+        window.cropper = null;
+      }
+      setPreviewImage(window.originalImage);
+    }
+
+    // 言語を切り替える
+    const setLang = (e) => {
+      // ボタンからアクティブ表示を外す
+      $f7.$el.find('.lang').removeClass('button-active');
+      // 選択されたボタンに `button-active` クラスを追加する
+      for (const dom of $f7.$el.find('.lang')) {
+        if ($(dom).hasClass(e)) {
+          $(dom).addClass('button-active');
+        }
+      }
+    }
+
+    const save = async (e) => {
+      // OCRクラス（DBでいうテーブル相当）を用意
+      const OCR = ncmb.DataStore('OCR');
+      // OCRクラスのインスタンス（DBでいう行相当）を用意
+      const o = new OCR;
+
+      // 解析結果のテキストをセット
+      const text = $f7.$el.find('[name="text"]').val();
+      o.set('text', text);
+      
+      // ログインしているユーザの情報
+      const user = ncmb.User.getCurrentUser();
+      // ACL（アクセスコントロール）を用意
+      const acl = new ncmb.Acl;
+      acl
+        .setUserReadAccess(user, true) // 作成者のみ読み込み可能
+        .setUserWriteAccess(user, true); // 作成者のみ編集可能
+
+      // プレビュー画像の情報を取得
+      const src = $f7.$el.find('.preview').attr('src');
+      if (src.indexOf('data:') > -1) { // dataURIであれば続行
+        // ファイルあり
+        const blob = await (await fetch(src)).blob();
+        // ファイル名は重複しないように生成
+        const fileName = `${user.objectId}-${(new Date).getTime()}.${blob.type.split('/')[1]}`;
+        // アップロード
+        await ncmb.File.upload(fileName, blob, acl);
+        // ファイル名を設定
+        o.set('fileName', fileName)
+      }
+
+      // ACLを設定して保存
+      await o
+        .set('acl', acl)
+        .save();
+      
+        // トーストで通知
+      $f7.toast.create({
+        text: '保存しました',
+        position: 'top',
+        closeTimeout: 2000,
+      }).open();
+    }
+
+    return $render;
+  }
+</script>
