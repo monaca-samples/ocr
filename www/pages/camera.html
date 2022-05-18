@@ -32,15 +32,16 @@
                   <li class="item-content item-input">
                     <div class="item-inner">
                       <div class="item-title item-label">撮影</div>
-                      <div class="item-input-wrap">
-                        <img src="assets/images/photo.png" class="preview" @click=${() => $f7.$el.find('#photo').click()} />
+                      <div class="item-input-wrap image-wrapper">
+                        <img src="assets/images/photo.png" class="preview" id="img-preview" @click=${() => $f7.$el.find('#photo').click()} />
+                        <div class="gauge-wrapper"><div class="gauge"></div></div>
                         <div style="display: none;">
                           <input type="file" id="photo" @change=${selectPhoto} accept="images/*" />
                         </div>
                       </div>
                     </div>
                   </li>
-                  <li class="item-content item-input">
+                  <li class="item-content item-input hidden" id="text-result">
                     <div class="item-inner">
                       <div class="item-title item-label">解析結果</div>
                       <div class="item-input-wrap">
@@ -61,9 +62,41 @@
 <style>
   .preview {
     width: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
   }
   .save {
     pointer-events: none;
+  }
+
+  .image-wrapper {
+      width: 100%;
+      position: relative;
+      height: 100%;
+  }
+
+  .gauge-wrapper {
+      position: absolute;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+  }
+
+  .gauge {
+      width: 100%;
+  }
+
+  .preview-processing {
+    filter: blur(4px);
+    -webkit-filter: blur(4px);
+  }
+
+  .hidden {
+      display: none !important;
   }
 </style>
 
@@ -79,8 +112,6 @@
 
     // 画像が選択された際の処理。OCR処理の実行
     const selectPhoto = async (e) => {
-      // プログレスバー表示
-      $f7.progressbar.show(0);
       // 保存ボタンを無効にする
       $f7.$el.find('.save').css({'pointer-events': 'none'});
       // 選択されている言語を取得
@@ -91,29 +122,88 @@
       // 指定されたファイルを読み込む
       const file = e.target.files[0];
       const src = await photoReader(file);
+
       // プレビューに適用
       $f7.$el.find('.preview').attr('src', src);
-      try {
-        // OCR処理の実行
-        const res = await Tesseract.recognize(file, lang, { logger: m => {
-          // プログレスバーの進捗を更新
-          if (m.status !== 'recognizing text') return;
-          $f7.progressbar.set(m.progress * 100);
-        }});
-        // 結果のテキスト
-        const text = res.data.text;
-        // テキストエリアに反映して、サイズを調整する
-        ele
-          .val(res.data.text)
-          .css('height', `${text.split(/\n/).length * 26}px`);
-        // 保存ボタンを押せるようにする
-        $f7.$el.find('.save').css({'pointer-events': 'auto'});
-      } catch (e) {
-        console.log(e);
-      }
-      // プログレスバーを消す
-      $f7.progressbar.hide();
+      const height = $f7.$el.find('.preview').height();
+      $f7.$el.find('.image-wrapper').css({'height':`${height}px`});
+
+      const crop = new Croppr('#img-preview', {
+        startSize: [100, 100, '%'],
+        onInitialize: function(instance) {
+            instance.resizeTo(100, 100);
+            instance.moveTo(100, 100);
+        },
+        onCropEnd: function (value) {
+            if (isNaN(value.x)) {
+                return;
+            }
+            const val = value;
+            cropImage(src, val.x, val.y, val.width, val. height, async function (data)  {
+                crop.destroy();
+                $f7.$el.find('.preview').attr('src', data);
+
+                // プログレスバー表示
+                $f7.$el.find('.preview').addClass('preview-processing');
+                const gauge = $f7.gauge.create({
+                    el: '.gauge',
+                    type: 'circle',
+                    value: 0.5,
+                    size: 250,
+                    borderColor: '#2196f3',
+                    borderWidth: 10
+                });
+                try {
+                    // OCR処理の実行
+                    const res = await Tesseract.recognize(data, lang, { logger: m => {
+                    // プログレスバーの進捗を更新
+                    if (m.status !== 'recognizing text') return;
+                    gauge.update({
+                        value: m.progress
+                    });
+                    }});
+                    // 結果のテキスト
+                    const text = res.data.text;
+                    // テキストエリアに反映して、サイズを調整する
+                    $f7.$el.find('#text-result').removeClass('hidden');
+                    ele
+                        .val(res.data.text)
+                        .css('height', `${text.split(/\n/).length * 26}px`);
+                    // 保存ボタンを押せるようにする
+                    $f7.$el.find('.save').css({'pointer-events': 'auto'});
+                } catch (e) {
+                    console.log(e);
+                }
+                // プログレスバーを消す
+                gauge.destroy();
+                $f7.$el.find('.preview').removeClass('preview-processing');
+            });
+        }
+      });
     }
+
+    const cropImage = (imageData, newX, newY, newWidth, newHeight, done) => {
+        //create an image object from the path
+        const originalImage = new Image();
+        originalImage.src = imageData;
+    
+        //initialize the canvas object
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+    
+        //wait for the image to finish loading
+        originalImage.addEventListener('load', function() {
+    
+            //set the canvas size to the new width and height
+            canvas.width = newWidth;
+            canvas.height = newHeight;
+            
+            //draw the image
+            ctx.drawImage(originalImage, newX, newY, newWidth, newHeight, 0, 0, newWidth, newHeight); 
+
+            done(canvas.toDataURL());
+        });
+    };
 
     // 言語を切り替える
     const setLang = (e) => {
