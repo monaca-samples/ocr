@@ -1,6 +1,6 @@
 // NCMBの初期化
-const applicationKey = '3f1fc674f5534a74dbda7247cad8decabda4b0b84a5675482371454ca8eb422d';
-const clientKey = 'da0c78eba42ab625de75c25fc39720542e332d7671a85157a7c75edc1d1b8cbb';
+const applicationKey = 'cc09f75a3224ab89c4ca4fc2605af8f989bcf8503b655e60d6de226a0d5028b9';
+const clientKey = '7967db557ffd1df7ce3dfb4cafb21a93d70367b601e62527d59a5f6fa1b2300f';
 const ncmb = new NCMB(applicationKey, clientKey);
 
 var $ = Dom7;
