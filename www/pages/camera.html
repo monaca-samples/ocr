@@ -32,11 +32,30 @@
                   <li class="item-content item-input">
                     <div class="item-inner">
                       <div class="item-title item-label">撮影</div>
-                      <div class="item-input-wrap image-wrapper">
-                        <img src="assets/images/photo.png" class="preview" id="img-preview" @click=${() => $f7.$el.find('#photo').click()} />
+                      <div class="item-input-wrap image-wrapper" @click=${startFileSelect}>
+                        <img src="assets/images/photo.png" class="preview" id="img-preview" @load=${setPreviewImageHeight} />
                         <div class="gauge-wrapper"><div class="gauge"></div></div>
                         <div style="display: none;">
                           <input type="file" id="photo" @change=${selectPhoto} accept="images/*" />
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                  <li class="item-content item-input hidden" id="crop-buttons">
+                    <div class="item-inner">
+                      <div class="item-input-wrap">
+                        <div class="row">
+                          <button class="col button button-fill button-round" @click=${startCrop}>トリミング</button>
+                          <button class="col button button-fill button-round" @click=${undoCrop}>取消す</button>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                  <li class="item-content item-input hidden" id="ocr-button">
+                    <div class="item-inner">
+                      <div class="item-input-wrap">
+                        <div class="row">
+                          <button class="col button button-fill button-round" @click=${startOcr}>OCRを開始</button>
                         </div>
                       </div>
                     </div>
@@ -60,202 +79,248 @@
 </template>
 
 <style>
-  .preview {
-    width: 100%;
-    position: absolute;
-    top: 0;
-    left: 0;
-  }
-  .save {
-    pointer-events: none;
-  }
-
-  .image-wrapper {
-      width: 100%;
-      position: relative;
-      height: 100%;
-  }
-
-  .gauge-wrapper {
-      position: absolute;
-      top: 0;
-      width: 100%;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-  }
-
-  .gauge {
-      width: 100%;
-  }
-
-  .preview-processing {
-    filter: blur(4px);
-    -webkit-filter: blur(4px);
-  }
-
-  .hidden {
-      display: none !important;
-  }
+    .preview {
+        width: 100%;
+        position: absolute;
+        top: 0;
+        left: 0;
+    }
+    
+    .save {
+        pointer-events: none;
+    }
+    
+    .image-wrapper {
+        width: 100%;
+        position: relative;
+        height: 100%;
+    }
+    
+    .gauge-wrapper {
+        position: absolute;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .gauge {
+        width: 100%;
+    }
+    
+    .preview-processing {
+        filter: blur(4px);
+        -webkit-filter: blur(4px);
+    }
+    
+    .hidden {
+        display: none !important;
+    }
 </style>
 
 <script>
-  export default async function (props, {$f7, $f7router, $on, $store }) {
-    // DOMが初期化完了した際に呼ばれるイベント
-    $on('pageBeforeIn', async (e, page) => {
-      // 認証していなければ、ログイン画面に移動
-      if (!(await checkAuth())) {
-        return $f7router.navigate({name: 'Login'});
-      }
-    });
-
-    // 画像が選択された際の処理。OCR処理の実行
-    const selectPhoto = async (e) => {
-      // 保存ボタンを無効にする
-      $f7.$el.find('.save').css({'pointer-events': 'none'});
-      // 選択されている言語を取得
-      const lang = $f7.$el.find('.lang.button-active').data('lang');
-      // 結果を表示するテキストエリア
-      const ele = $f7.$el.find('[name="text"]');
-      ele.val(''); // 一旦内容を消す
-      // 指定されたファイルを読み込む
-      const file = e.target.files[0];
-      const src = await photoReader(file);
-
-      // プレビューに適用
-      $f7.$el.find('.preview').attr('src', src);
-      const height = $f7.$el.find('.preview').height();
-      $f7.$el.find('.image-wrapper').css({'height':`${height}px`});
-
-      const crop = new Croppr('#img-preview', {
-        startSize: [100, 100, '%'],
-        onInitialize: function(instance) {
-            instance.resizeTo(100, 100);
-            instance.moveTo(100, 100);
-        },
-        onCropEnd: function (value) {
-            if (isNaN(value.x)) {
-                return;
-            }
-            const val = value;
-            cropImage(src, val.x, val.y, val.width, val. height, async function (data)  {
-                crop.destroy();
-                $f7.$el.find('.preview').attr('src', data);
-
-                // プログレスバー表示
-                $f7.$el.find('.preview').addClass('preview-processing');
-                const gauge = $f7.gauge.create({
-                    el: '.gauge',
-                    type: 'circle',
-                    value: 0.5,
-                    size: 250,
-                    borderColor: '#2196f3',
-                    borderWidth: 10
+    export default async function(props, {$f7, $f7router, $on, $store}) {
+        // DOMが初期化完了した際に呼ばれるイベント
+        $on('pageBeforeIn', async(e, page) => {
+            // 認証していなければ、ログイン画面に移動
+            if (!(await checkAuth())) {
+                return $f7router.navigate({
+                    name: 'Login'
                 });
-                try {
-                    // OCR処理の実行
-                    const res = await Tesseract.recognize(data, lang, { logger: m => {
-                    // プログレスバーの進捗を更新
-                    if (m.status !== 'recognizing text') return;
-                    gauge.update({
-                        value: m.progress
-                    });
-                    }});
-                    // 結果のテキスト
-                    const text = res.data.text;
-                    // テキストエリアに反映して、サイズを調整する
-                    $f7.$el.find('#text-result').removeClass('hidden');
-                    ele
-                        .val(res.data.text)
-                        .css('height', `${text.split(/\n/).length * 26}px`);
-                    // 保存ボタンを押せるようにする
-                    $f7.$el.find('.save').css({'pointer-events': 'auto'});
-                } catch (e) {
-                    console.log(e);
-                }
-                // プログレスバーを消す
-                gauge.destroy();
-                $f7.$el.find('.preview').removeClass('preview-processing');
+            }
+        });
+
+        const setPreviewImageHeight = (e) => {
+            const previewImage = $f7.$el.find('.preview');
+            $f7.$el.find('.image-wrapper').css({
+                'height': `${previewImage.height()}px`
             });
         }
-      });
-    }
 
-    const cropImage = (imageData, newX, newY, newWidth, newHeight, done) => {
-        //create an image object from the path
-        const originalImage = new Image();
-        originalImage.src = imageData;
-    
-        //initialize the canvas object
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-    
-        //wait for the image to finish loading
-        originalImage.addEventListener('load', function() {
-    
-            //set the canvas size to the new width and height
-            canvas.width = newWidth;
-            canvas.height = newHeight;
-            
-            //draw the image
-            ctx.drawImage(originalImage, newX, newY, newWidth, newHeight, 0, 0, newWidth, newHeight); 
-
-            done(canvas.toDataURL());
-        });
-    };
-
-    // 言語を切り替える
-    const setLang = (e) => {
-      // ボタンからアクティブ表示を外す
-      $f7.$el.find('.lang').removeClass('button-active');
-      // 選択されたボタンに `button-active` クラスを追加する
-      for (const dom of $f7.$el.find('.lang')) {
-        if ($(dom).hasClass(e)) {
-          $(dom).addClass('button-active');
+        const startFileSelect = (e) => {
+            if (window.cropper) {
+                return;
+            }
+            $f7.$el.find('#photo').click();
         }
-      }
-    }
 
-    const save = async (e) => {
-      // OCRクラス（DBでいうテーブル相当）を用意
-      const OCR = ncmb.DataStore('OCR');
-      // OCRクラスのインスタンス（DBでいう行相当）を用意
-      const o = new OCR;
-      // 解析結果のテキストをセット
-      const text = $f7.$el.find('[name="text"]').val();
-      o.set('text', text);
-      // ログインしているユーザの情報
-      const user = ncmb.User.getCurrentUser();
-      // ACL（アクセスコントロール）を用意
-      const acl = new ncmb.Acl;
-      acl
-        .setUserReadAccess(user, true)   // 作成者のみ読み込み可能
-        .setUserWriteAccess(user, true); // 作成者のみ編集可能
-      // プレビュー画像の情報を取得
-      const src = $f7.$el.find('.preview').attr('src');
-      if (src.indexOf('data:') > -1) { // dataURIであれば続行
-        // ファイルあり
-        const blob = await (await fetch(src)).blob();
-        // ファイル名は重複しないように生成
-        const fileName = `${user.objectId}-${(new Date).getTime()}.${blob.type.split('/')[1]}`;
-        // アップロード
-        await ncmb.File.upload(fileName, blob, acl);
-        // ファイル名を設定
-        o.set('fileName', fileName)
-      }
-      // ACLを設定して保存
-      await o
-        .set('acl', acl)
-        .save();
-      // トーストで通知
-      $f7.toast.create({
-        text: '保存しました',
-        position: 'top',
-        closeTimeout: 2000,
-      }).open();
-    }
+        // 画像が選択された際の処理。OCR処理の実行
+        const selectPhoto = async(e) => {
+            // 保存ボタンを無効にする
+            $f7.$el.find('.save').css({
+                'pointer-events': 'none'
+            });
+            // 結果を表示するテキストエリア
+            const ele = $f7.$el.find('[name="text"]');
+            ele.val(''); // 一旦内容を消す
+            // 指定されたファイルを読み込む
+            const file = e.target.files[0];
+            const src = await photoReader(file);
+            window.originalImage = src;
 
-    return $render;
-  }
+            // プレビューに適用
+            setPreviewImage(src);
+
+            $f7.$el.find('#crop-buttons').removeClass('hidden');
+            $f7.$el.find('#ocr-button').removeClass('hidden');
+        }
+
+        const startOcr = async(e) => {
+            e.preventDefault();
+            // 選択されている言語を取得
+            const lang = $f7.$el.find('.lang.button-active').data('lang');
+            const data = $f7.$el.find('.preview').attr('src');
+            const ele = $f7.$el.find('[name="text"]');
+            // プログレスバー表示
+            $f7.$el.find('.preview').addClass('preview-processing');
+            const gauge = $f7.gauge.create({
+                el: '.gauge',
+                type: 'circle',
+                value: 0.0,
+                size: 250,
+                borderColor: '#2196f3',
+                borderWidth: 10
+            });
+            try {
+                // OCR処理の実行
+                const res = await Tesseract.recognize(data, lang, {
+                    logger: m => {
+                        // プログレスバーの進捗を更新
+                        if (m.status !== 'recognizing text') return;
+                        gauge.update({
+                            value: m.progress
+                        });
+                    }
+                });
+                // 結果のテキスト
+                const text = res.data.text;
+                // テキストエリアに反映して、サイズを調整する
+                $f7.$el.find('#text-result').removeClass('hidden');
+                ele
+                    .val(res.data.text)
+                    .css('height', `${text.split(/\n/).length * 26}px`);
+                // 保存ボタンを押せるようにする
+                $f7.$el.find('.save').css({
+                    'pointer-events': 'auto'
+                });
+            } catch (e) {
+                console.log(e);
+            }
+            // プログレスバーを消す
+            gauge.destroy();
+            $f7.$el.find('.preview').removeClass('preview-processing');
+        }
+
+        const cropImage = (imageData, newX, newY, newWidth, newHeight, done) => {
+            //create an image object from the path
+            const originalImage = new Image();
+            originalImage.src = imageData;
+
+            //initialize the canvas object
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            //wait for the image to finish loading
+            originalImage.addEventListener('load', function() {
+
+                //set the canvas size to the new width and height
+                canvas.width = newWidth;
+                canvas.height = newHeight;
+
+                //draw the image
+                ctx.drawImage(originalImage, newX, newY, newWidth, newHeight, 0, 0, newWidth, newHeight);
+
+                done(canvas.toDataURL());
+            });
+        };
+
+        const setPreviewImage = (data) => {
+            $f7.$el.find('.preview').attr('src', data);
+            setPreviewImageHeight();
+        }
+
+        const startCrop = (e) => {
+            e.preventDefault();
+            window.cropper = new Croppr('#img-preview', {
+                startSize: [100, 100, 'px'],
+                onCropEnd: function(value) {
+                    if (isNaN(value.x)) {
+                        return;
+                    }
+                    const val = value;
+                    cropImage(window.originalImage, val.x, val.y, val.width, val.height, async function(data) {
+                        if (window.cropper) {
+                            window.cropper.destroy();
+                            window.cropper = null;
+                        }
+                        setPreviewImage(data);
+                    });
+                }
+            });
+        }
+
+        const undoCrop = (e) => {
+            e.preventDefault();
+            if (window.cropper) {
+                window.cropper.destroy();
+                window.cropper = null;
+            }
+            setPreviewImage(window.originalImage);
+        }
+
+        // 言語を切り替える
+        const setLang = (e) => {
+            // ボタンからアクティブ表示を外す
+            $f7.$el.find('.lang').removeClass('button-active');
+            // 選択されたボタンに `button-active` クラスを追加する
+            for (const dom of $f7.$el.find('.lang')) {
+                if ($(dom).hasClass(e)) {
+                    $(dom).addClass('button-active');
+                }
+            }
+        }
+
+        const save = async(e) => {
+            // OCRクラス（DBでいうテーブル相当）を用意
+            const OCR = ncmb.DataStore('OCR');
+            // OCRクラスのインスタンス（DBでいう行相当）を用意
+            const o = new OCR;
+            // 解析結果のテキストをセット
+            const text = $f7.$el.find('[name="text"]').val();
+            o.set('text', text);
+            // ログインしているユーザの情報
+            const user = ncmb.User.getCurrentUser();
+            // ACL（アクセスコントロール）を用意
+            const acl = new ncmb.Acl;
+            acl
+                .setUserReadAccess(user, true) // 作成者のみ読み込み可能
+                .setUserWriteAccess(user, true); // 作成者のみ編集可能
+            // プレビュー画像の情報を取得
+            const src = $f7.$el.find('.preview').attr('src');
+            if (src.indexOf('data:') > -1) { // dataURIであれば続行
+                // ファイルあり
+                const blob = await (await fetch(src)).blob();
+                // ファイル名は重複しないように生成
+                const fileName = `${user.objectId}-${(new Date).getTime()}.${blob.type.split('/')[1]}`;
+                // アップロード
+                await ncmb.File.upload(fileName, blob, acl);
+                // ファイル名を設定
+                o.set('fileName', fileName)
+            }
+            // ACLを設定して保存
+            await o
+                .set('acl', acl)
+                .save();
+            // トーストで通知
+            $f7.toast.create({
+                text: '保存しました',
+                position: 'top',
+                closeTimeout: 2000,
+            }).open();
+        }
+
+        return $render;
+    }
 </script>
